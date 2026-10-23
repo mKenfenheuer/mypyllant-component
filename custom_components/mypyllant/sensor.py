@@ -1210,26 +1210,29 @@ class EfficiencySensor(CoordinatorEntity, SensorEntity):
     @property
     def energy_consumed(self) -> float:
         """
-        Returns total consumed electrical energy for the current day
+        Returns total consumed electrical energy for heating in the fetched period
         """
         return sum(
             [
                 v.total_consumption_rounded
                 for v in self.device_data_list
                 if v.energy_type == "CONSUMED_ELECTRICAL_ENERGY"
+                and v.operation_mode == "HEATING"
             ]
         )
 
     @property
     def heat_energy_generated(self) -> float:
         """
-        Returns total generated heating energy for the current day
+        Returns total generated heating energy in the fetched period
+
+        Domestic hot water and cooling are excluded, like in the heating efficiency of the myVAILLANT app
         """
         return sum(
             [
                 v.total_consumption_rounded
                 for v in self.device_data_list
-                if v.energy_type == "HEAT_GENERATED"
+                if v.energy_type == "HEAT_GENERATED" and v.operation_mode == "HEATING"
             ]
         )
 

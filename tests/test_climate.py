@@ -15,11 +15,16 @@ from homeassistant.helpers.entity_registry import DATA_REGISTRY, EntityRegistry
 from homeassistant.loader import DATA_COMPONENTS, DATA_INTEGRATIONS
 
 from myPyllant.api import MyPyllantAPI
-from myPyllant.enums import VentilationOperationModeVRC700
+from myPyllant.enums import (
+    VentilationOperationModeVRC700,
+    ZoneCurrentSpecialFunction,
+    ZoneOperatingModeVRC700,
+)
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 from myPyllant.tests.generate_test_data import DATA_DIR
 from myPyllant.tests.utils import list_test_data, load_test_data
 
-from custom_components.mypyllant.const import DOMAIN
+from custom_components.mypyllant.const import DOMAIN, OPTION_TIME_PROGRAM_OVERWRITE
 from custom_components.mypyllant.coordinator import SystemCoordinator
 from custom_components.mypyllant.climate import (
     ZoneClimate,
@@ -247,5 +252,53 @@ async def test_ambisense_climate(
         await ambisense.async_set_preset_mode(PRESET_NONE)
         with pytest.raises(ServiceValidationError):
             await ambisense.async_set_preset_mode(PRESET_BOOST)
+        system_coordinator_mock._debounced_refresh.async_cancel()
+    await mocked_api.aiohttp_session.close()
+
+
+async def test_vrc700_time_program_overwrite(
+    mypyllant_aioresponses,
+    mocked_api: MyPyllantAPI,
+    system_coordinator_mock: SystemCoordinator,
+):
+    """
+    VRC700 time programs have no setpoint per slot, so the day temperature is set instead, see
+    https://github.com/signalkraft/mypyllant-component/issues/141
+    """
+    test_data = load_test_data(DATA_DIR / "vrc700")
+    with mypyllant_aioresponses(test_data) as _:
+        system_coordinator_mock.data = (
+            await system_coordinator_mock._async_update_data()
+        )
+        climate = ZoneClimate(
+            0,
+            0,
+            system_coordinator_mock,
+            MockConfigEntry(
+                domain=DOMAIN, options={OPTION_TIME_PROGRAM_OVERWRITE: True}
+            ),
+            {},
+        )
+        climate.zone.heating.operation_mode_heating = ZoneOperatingModeVRC700.AUTO
+        climate.zone.cooling = None
+        climate.zone.current_special_function = ZoneCurrentSpecialFunction.NONE
+        with (
+            mock.patch.object(
+                system_coordinator_mock.api, "set_manual_mode_setpoint"
+            ) as mock_manual,
+            mock.patch.object(
+                system_coordinator_mock.api, "set_time_program_temperature"
+            ) as mock_time_program,
+        ):
+            await climate.async_set_temperature(
+                **{
+                    ATTR_TEMPERATURE: (
+                        climate.zone.desired_room_temperature_setpoint_heating or 0
+                    )
+                    + 1
+                }
+            )
+        mock_manual.assert_awaited_once()
+        mock_time_program.assert_not_awaited()
         system_coordinator_mock._debounced_refresh.async_cancel()
     await mocked_api.aiohttp_session.close()

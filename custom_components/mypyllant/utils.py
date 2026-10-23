@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import typing
 from asyncio.exceptions import CancelledError
 from collections.abc import MutableSequence
@@ -344,6 +345,24 @@ def extract_quota_duration(exc_info: BaseException | None) -> int | None:
         seconds = int(match.group(4))
         return days * 86400 + hours * 3600 + minutes * 60 + seconds
     return None
+
+
+class RedactSecretsFilter(logging.Filter):
+    """
+    myPyllant logs the password and tokens in its debug logs, which are attached to public issues
+    """
+
+    pattern = re.compile(
+        r"(password|access_token|refresh_token|id_token)(['\"]?\s*[:=]\s*['\"]?)[^&'\"\s,}]+"
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        redacted = self.pattern.sub(r"\1\2***", message)
+        if redacted != message:
+            record.msg = redacted
+            record.args = None
+        return True
 
 
 def is_transient_login_error(exc_info: BaseException) -> bool:

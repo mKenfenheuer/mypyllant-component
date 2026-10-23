@@ -908,3 +908,36 @@ async def test_migrate_api_request_count_unique_id(hass):
         registry.async_get(entry.entity_id).unique_id
         == f"{DOMAIN}_{config_entry.entry_id}_api_request_count"
     )
+
+
+def test_efficiency_only_includes_heating(hass):
+    """
+    See https://github.com/signalkraft/mypyllant-component/issues/203
+    """
+
+    def _device_data(operation_mode, energy_type, total):
+        return DeviceData(
+            operation_mode=operation_mode,
+            energy_type=energy_type,
+            total_consumption=total,
+            data=[],
+        )
+
+    coordinator = MagicMock()
+    coordinator.data = {
+        _SYSTEM_ID: {
+            "devices_data": [
+                [
+                    _device_data("HEATING", "CONSUMED_ELECTRICAL_ENERGY", 2000.0),
+                    _device_data("HEATING", "HEAT_GENERATED", 9000.0),
+                    _device_data(
+                        "DOMESTIC_HOT_WATER", "CONSUMED_ELECTRICAL_ENERGY", 1000.0
+                    ),
+                    _device_data("DOMESTIC_HOT_WATER", "HEAT_GENERATED", 2000.0),
+                ]
+            ],
+            "home_name": "Test Home",
+        }
+    }
+    assert EfficiencySensor(_SYSTEM_ID, 0, coordinator).native_value == 4.5
+    assert EfficiencySensor(_SYSTEM_ID, None, coordinator).native_value == 4.5

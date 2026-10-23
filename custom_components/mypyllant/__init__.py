@@ -42,9 +42,13 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL_DAILY,
 )
 from .coordinator import SystemCoordinator, DailyDataCoordinator
-from .utils import is_transient_login_error
+from .utils import RedactSecretsFilter, is_transient_login_error
 
 _LOGGER = logging.getLogger(__name__)
+
+_REDACT_SECRETS_FILTER = RedactSecretsFilter()
+for _logger_name in ("myPyllant.api", "myPyllant.http_client"):
+    logging.getLogger(_logger_name).addFilter(_REDACT_SECRETS_FILTER)
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
