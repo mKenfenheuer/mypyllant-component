@@ -11,9 +11,11 @@ from homeassistant.core import (
     SupportsResponse,
     ServiceCall,
     ServiceResponse,
+    callback,
 )
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import selector
+from homeassistant.helpers.event import async_track_time_change
 
 from myPyllant import export, report
 
@@ -131,7 +133,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise
     hass.data[DOMAIN][entry.entry_id]["system_coordinator"] = system_coordinator
 
-    # Daily data coordinator is fetched once by default (to get all entities), but not updated on a regular basis
+    # Daily data coordinator is fetched once by default (to get all entities), and then only once per night
     # to prevent quota errors
     daily_data_coordinator = DailyDataCoordinator(
         hass,
@@ -142,6 +144,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("Refreshing DailyDataCoordinator")
     await daily_data_coordinator.async_refresh()
     hass.data[DOMAIN][entry.entry_id]["daily_data_coordinator"] = daily_data_coordinator
+
+    @callback
+    def _refresh_missing_daily_data() -> None:
+        # Daily data failed during setup (i.e. quota exceeded) and isn't polled without an update interval,
+        # so it's retried after successful system updates. The quota backoff still applies.
+        if system_coordinator.last_update_success and not daily_data_coordinator.data:
+            entry.async_create_background_task(
+                hass,
+                daily_data_coordinator.async_request_refresh(),
+                "mypyllant_refresh_missing_daily_data",
+            )
+
+    entry.async_on_unload(
+        system_coordinator.async_add_listener(_refresh_missing_daily_data)
+    )
+
+    if not update_interval_daily:
+        # Without an update interval, energy data is fetched once per night, so the hourly statistics
+        # of the previous day are complete and the sensors don't stay at 0 after midnight
+        async def _refresh_daily_data(now: dt) -> None:
+            await daily_data_coordinator.async_request_refresh()
+
+        entry.async_on_unload(
+            async_track_time_change(
+                hass, _refresh_daily_data, hour=0, minute=30, second=0
+            )
+        )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

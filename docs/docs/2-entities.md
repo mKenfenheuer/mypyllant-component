@@ -378,10 +378,11 @@ so the only new row added is the previously-missing hour.
 
 !!! danger "important"
 
-    To avoid hitting the myVAILLANT API quota, the **daily energy data is *not* refreshed
-    automatically**: it is only fetched once when the integration loads. You therefore need to
-    trigger a refresh yourself to keep the hourly statistics current. There are two recommended
-    approaches depending on whether you have hourly electricity metering in Home Assistant.
+    To avoid hitting the myVAILLANT API quota, the **daily energy data is only refreshed when the
+    integration loads and once per night at 00:30** (unless you set an update interval). That
+    keeps the hourly statistics complete one day in arrears. To get more current data during the
+    day, trigger a refresh yourself. There are two recommended approaches depending on whether you
+    have hourly electricity metering in Home Assistant.
 
 A refresh is triggered by calling `homeassistant.update_entity` on **any** of the integration's
 energy / efficiency sensors (e.g. `sensor.home_device_0_arotherm_plus_heating_energy_efficiency`).
@@ -462,10 +463,11 @@ next morning. Daily totals are always correct.
 
 #### Option B: no hourly metering
 
-If you don't have an hourly grid-consumption sensor to gate on, simply refresh **once per day at
-00:30**. Thanks to the two-day fetch, this pulls the *entire* previous day (now complete,
-including its final hour) plus the current day so far. You get accurate per-hour data one day in
-arrears:
+If you don't have an hourly grid-consumption sensor to gate on, the built-in refresh **once per day
+at 00:30** is enough. Thanks to the two-day fetch, this pulls the *entire* previous day (now
+complete, including its final hour) plus the current day so far. You get accurate per-hour data one
+day in arrears. Older versions of the integration needed this automation for it, which you can
+remove now:
 
 ```yaml
 # automations.yaml
