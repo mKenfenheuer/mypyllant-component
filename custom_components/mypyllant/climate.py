@@ -29,7 +29,7 @@ from homeassistant.helpers import entity_platform, selector
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from myPyllant.const import DEFAULT_QUICK_VETO_DURATION
+from myPyllant.const import DEFAULT_HOLIDAY_DURATION, DEFAULT_QUICK_VETO_DURATION
 from myPyllant.models import (
     System,
     Zone,
@@ -51,6 +51,8 @@ from custom_components.mypyllant.utils import (
     shorten_zone_name,
     EntityList,
     AmbisenseCoordinatorEntity,
+    set_cooling_for_days,
+    set_holiday,
 )
 
 from . import SystemCoordinator
@@ -66,6 +68,7 @@ from .const import (
     SERVICE_SET_QUICK_VETO,
     SERVICE_SET_VENTILATION_FAN_STAGE,
     SERVICE_SET_ZONE_TIME_PROGRAM,
+    OPTION_DEFAULT_HOLIDAY_DURATION,
     OPTION_DEFAULT_HOLIDAY_SETPOINT,
     DEFAULT_HOLIDAY_SETPOINT,
     SERVICE_SET_ZONE_OPERATING_MODE,
@@ -509,8 +512,15 @@ class ZoneClimate(CoordinatorEntity, ClimateEntity):
             setpoint = self.config.options.get(
                 OPTION_DEFAULT_HOLIDAY_SETPOINT, DEFAULT_HOLIDAY_SETPOINT
             )
-        await self.coordinator.api.set_holiday(
-            self.system, start, end, setpoint=setpoint
+        await set_holiday(
+            self.coordinator.api,
+            self.system,
+            start,
+            end,
+            setpoint=setpoint,
+            default_duration=self.config.options.get(
+                OPTION_DEFAULT_HOLIDAY_DURATION, DEFAULT_HOLIDAY_DURATION
+            ),
         )
         await self.coordinator.async_request_refresh_delayed(20)
 
@@ -530,8 +540,8 @@ class ZoneClimate(CoordinatorEntity, ClimateEntity):
         start = kwargs.get("start")
         end = kwargs.get("end")
         duration_days = kwargs.get("duration_days")
-        await self.coordinator.api.set_cooling_for_days(
-            self.system, start, end, duration_days
+        await set_cooling_for_days(
+            self.coordinator.api, self.system, start, end, duration_days
         )
         await self.coordinator.async_request_refresh_delayed(20)
 

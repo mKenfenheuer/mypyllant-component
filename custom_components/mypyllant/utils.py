@@ -4,7 +4,7 @@ import logging
 import typing
 from asyncio.exceptions import CancelledError
 from collections.abc import MutableSequence
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import TypeVar
 
 from aiohttp.client_exceptions import ClientResponseError
@@ -14,13 +14,16 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from custom_components.mypyllant.const import (
     DOMAIN,
     OPTION_DEFAULT_HOLIDAY_DURATION,
+    OPTION_DEFAULT_HOLIDAY_SETPOINT,
     OPTION_DEFAULT_MANUAL_COOLING_DURATION,
+    DEFAULT_HOLIDAY_SETPOINT,
     DEFAULT_MANUAL_COOLING_DURATION,
 )
 from myPyllant.const import DEFAULT_HOLIDAY_DURATION
 
 if typing.TYPE_CHECKING:
     from custom_components.mypyllant.coordinator import SystemCoordinator
+    from myPyllant.api import MyPyllantAPI
     from myPyllant.models import (
         System,
         DomesticHotWater,
@@ -127,6 +130,15 @@ class HolidayEntity(SystemCoordinatorEntity):
         )
 
     @property
+    def default_holiday_setpoint(self) -> float | None:
+        # Only VRC700 controllers support a setpoint during holidays
+        if not self.system.control_identifier.is_vrc700:
+            return None
+        return self.config.options.get(
+            OPTION_DEFAULT_HOLIDAY_SETPOINT, DEFAULT_HOLIDAY_SETPOINT
+        )
+
+    @property
     def extra_state_attributes(self) -> typing.Mapping[str, typing.Any] | None:
         return {
             "holiday_ongoing": self.zone.general.holiday_ongoing
@@ -203,6 +215,75 @@ class ManualCoolingEntity(SystemCoordinatorEntity):
     @property
     def manual_cooling_remaining(self) -> timedelta | None:
         return self.system.manual_cooling_remaining
+
+
+def to_api_datetime(value: datetime | None, tz: tzinfo) -> datetime | None:
+    """
+    myPyllant appends "Z" to datetimes without converting them to UTC, so local times would be shifted
+    by the UTC offset (i.e. holidays starting two hours late in CEST). Converts them to UTC before.
+    Naive datetimes are interpreted in the timezone of the system.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=tz)
+    return value.astimezone(timezone.utc)
+
+
+def to_local_datetime(value: datetime | None, tz: tzinfo) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=tz)
+    return value.astimezone(tz)
+
+
+async def set_holiday(
+    api: MyPyllantAPI,
+    system: System,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    setpoint: float | None = None,
+    default_duration: float = DEFAULT_HOLIDAY_DURATION,
+):
+    """
+    Sets holiday mode with start and end in UTC, defaulting to now and the default duration in days
+    """
+    start = to_api_datetime(start, system.timezone) or datetime.now(timezone.utc)
+    end = to_api_datetime(end, system.timezone) or start + timedelta(
+        days=default_duration
+    )
+    return await api.set_holiday(system, start=start, end=end, setpoint=setpoint)
+
+
+async def set_cooling_for_days(
+    api: MyPyllantAPI,
+    system: System,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    duration_days: int | None = None,
+    default_duration: float = DEFAULT_HOLIDAY_DURATION,
+):
+    """
+    Sets manual cooling with start and end in UTC, see set_holiday()
+
+    VRC700 controllers only accept a duration in days, which is passed through
+    """
+    if system.control_identifier.is_vrc700:
+        return await api.set_cooling_for_days(system, start, end, duration_days)
+    if duration_days:
+        if start or end:
+            raise ValueError(
+                "Start and end dates can't be used together with duration_days"
+            )
+        start = datetime.now(timezone.utc)
+        end = start + timedelta(days=duration_days)
+    else:
+        start = to_api_datetime(start, system.timezone) or datetime.now(timezone.utc)
+        end = to_api_datetime(end, system.timezone) or start + timedelta(
+            days=default_duration
+        )
+    return await api.set_cooling_for_days(system, start=start, end=end)
 
 
 def shorten_zone_name(zone_name: str) -> str:

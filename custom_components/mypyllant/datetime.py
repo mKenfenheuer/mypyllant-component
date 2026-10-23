@@ -10,7 +10,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from custom_components.mypyllant.const import (
     DOMAIN,
-    DEFAULT_HOLIDAY_SETPOINT,
     DEFAULT_DHW_LEGIONELLA_PROTECTION_TEMPERATURE,
 )
 from custom_components.mypyllant.decorators import ensure_token_refresh
@@ -20,6 +19,9 @@ from custom_components.mypyllant.utils import (
     EntityList,
     ManualCoolingEntity,
     DomesticHotWaterCoordinatorEntity,
+    set_cooling_for_days,
+    set_holiday,
+    to_local_datetime,
 )
 from myPyllant.utils import get_default_holiday_dates
 
@@ -79,11 +81,7 @@ class SystemHolidayStartDateTimeEntity(HolidayEntity, DateTimeEntity):
 
     @property
     def native_value(self):
-        return (
-            self.holiday_start.replace(tzinfo=self.system.timezone)
-            if self.holiday_start
-            else None
-        )
+        return to_local_datetime(self.holiday_start, self.system.timezone)
 
     @ensure_token_refresh
     async def async_set_value(self, value: datetime) -> None:
@@ -93,11 +91,12 @@ class SystemHolidayStartDateTimeEntity(HolidayEntity, DateTimeEntity):
             self.system.timezone,
             self.default_holiday_duration,
         )
-        setpoint = None
-        if self.system.control_identifier.is_vrc700:
-            setpoint = DEFAULT_HOLIDAY_SETPOINT
-        await self.coordinator.api.set_holiday(
-            self.system, start=value, end=end, setpoint=setpoint
+        await set_holiday(
+            self.coordinator.api,
+            self.system,
+            start=value,
+            end=end,
+            setpoint=self.default_holiday_setpoint,
         )
         # Holiday values need a long time to show up in the API
         await self.coordinator.async_request_refresh_delayed(10)
@@ -116,20 +115,17 @@ class SystemHolidayEndDateTimeEntity(SystemHolidayStartDateTimeEntity):
 
     @property
     def native_value(self):
-        return (
-            self.holiday_end.replace(tzinfo=self.system.timezone)
-            if self.holiday_end
-            else None
-        )
+        return to_local_datetime(self.holiday_end, self.system.timezone)
 
     @ensure_token_refresh
     async def async_set_value(self, value: datetime) -> None:
-        # TODO: Make API tz-aware
-        setpoint = None
-        if self.system.control_identifier.is_vrc700:
-            setpoint = DEFAULT_HOLIDAY_SETPOINT
-        await self.coordinator.api.set_holiday(
-            self.system, start=self.holiday_start, end=value, setpoint=setpoint
+        await set_holiday(
+            self.coordinator.api,
+            self.system,
+            start=self.holiday_start,
+            end=value,
+            setpoint=self.default_holiday_setpoint,
+            default_duration=self.default_holiday_duration,
         )
         # Holiday values need a long time to show up in the API
         await self.coordinator.async_request_refresh_delayed(10)
@@ -148,11 +144,7 @@ class SystemManualCoolingStartDateTimeEntity(ManualCoolingEntity, DateTimeEntity
 
     @property
     def native_value(self):
-        return (
-            self.manual_cooling_start.replace(tzinfo=self.system.timezone)
-            if self.manual_cooling_start
-            else None
-        )
+        return to_local_datetime(self.manual_cooling_start, self.system.timezone)
 
     @ensure_token_refresh
     async def async_set_value(self, value: datetime) -> None:
@@ -162,7 +154,8 @@ class SystemManualCoolingStartDateTimeEntity(ManualCoolingEntity, DateTimeEntity
             self.system.timezone,
             self.default_manual_cooling_duration,
         )
-        await self.coordinator.api.set_cooling_for_days(
+        await set_cooling_for_days(
+            self.coordinator.api,
             self.system,
             start=value,
             end=end,
@@ -183,18 +176,16 @@ class SystemManualCoolingEndDateTimeEntity(SystemManualCoolingStartDateTimeEntit
 
     @property
     def native_value(self):
-        return (
-            self.manual_cooling_end.replace(tzinfo=self.system.timezone)
-            if self.manual_cooling_end
-            else None
-        )
+        return to_local_datetime(self.manual_cooling_end, self.system.timezone)
 
     @ensure_token_refresh
     async def async_set_value(self, value: datetime) -> None:
-        await self.coordinator.api.set_cooling_for_days(
+        await set_cooling_for_days(
+            self.coordinator.api,
             self.system,
             start=self.manual_cooling_start,
             end=value,
+            default_duration=self.default_manual_cooling_duration,
         )
         await self.coordinator.async_request_refresh_delayed(20)
 

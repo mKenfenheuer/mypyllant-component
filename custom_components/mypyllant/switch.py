@@ -7,7 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from custom_components.mypyllant.const import DOMAIN, DEFAULT_HOLIDAY_SETPOINT
+from custom_components.mypyllant.const import DOMAIN
 from custom_components.mypyllant.decorators import ensure_token_refresh
 from custom_components.mypyllant.coordinator import SystemCoordinator
 from custom_components.mypyllant.utils import (
@@ -17,6 +17,8 @@ from custom_components.mypyllant.utils import (
     ManualCoolingEntity,
     ZoneCoordinatorEntity,
     SystemCoordinatorEntity,
+    set_cooling_for_days,
+    set_holiday,
 )
 from myPyllant.enums import ZoneCurrentSpecialFunction
 from myPyllant.utils import get_default_holiday_dates
@@ -75,10 +77,12 @@ class SystemHolidaySwitch(HolidayEntity, SwitchEntity):
             self.system.timezone,
             self.default_holiday_duration,
         )
-        setpoint = None
-        if self.system.control_identifier.is_vrc700:
-            setpoint = DEFAULT_HOLIDAY_SETPOINT
-        await self.coordinator.api.set_holiday(self.system, end=end, setpoint=setpoint)
+        await set_holiday(
+            self.coordinator.api,
+            self.system,
+            end=end,
+            setpoint=self.default_holiday_setpoint,
+        )
         # Holiday values need a long time to show up in the API
         await self.coordinator.async_request_refresh_delayed(20)
 
@@ -106,8 +110,10 @@ class SystemManualCoolingSwitch(ManualCoolingEntity, SwitchEntity):
 
     @ensure_token_refresh
     async def async_turn_on(self, **kwargs):
-        await self.coordinator.api.set_cooling_for_days(
-            self.system, duration_days=self.default_manual_cooling_duration
+        await set_cooling_for_days(
+            self.coordinator.api,
+            self.system,
+            duration_days=self.default_manual_cooling_duration,
         )
         await self.coordinator.async_request_refresh_delayed(20)
 

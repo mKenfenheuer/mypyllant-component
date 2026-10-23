@@ -9,7 +9,7 @@ from homeassistant.const import UnitOfTime, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from custom_components.mypyllant.const import DOMAIN, DEFAULT_HOLIDAY_SETPOINT
+from custom_components.mypyllant.const import DOMAIN
 from custom_components.mypyllant.decorators import ensure_token_refresh
 from custom_components.mypyllant.coordinator import SystemCoordinator
 from custom_components.mypyllant.utils import (
@@ -18,6 +18,8 @@ from custom_components.mypyllant.utils import (
     ZoneCoordinatorEntity,
     EntityList,
     CircuitEntity,
+    set_cooling_for_days,
+    set_holiday,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -121,11 +123,11 @@ class SystemHolidayDurationNumber(HolidayEntity, NumberEntity):
             if self.native_unit_of_measurement == UnitOfTime.DAYS:
                 value = value * 24
             end = datetime.now(self.system.timezone) + timedelta(hours=value)
-            setpoint = None
-            if self.system.control_identifier.is_vrc700:
-                setpoint = DEFAULT_HOLIDAY_SETPOINT
-            await self.coordinator.api.set_holiday(
-                self.system, end=end, setpoint=setpoint
+            await set_holiday(
+                self.coordinator.api,
+                self.system,
+                end=end,
+                setpoint=self.default_holiday_setpoint,
             )
             # Holiday values need a long time to show up in the API
             await self.coordinator.async_request_refresh_delayed(20)
@@ -153,8 +155,8 @@ class SystemManualCoolingDays(SystemCoordinatorEntity, NumberEntity):
         if value == 0:
             await self.coordinator.api.cancel_cooling_for_days(self.system)
         else:
-            await self.coordinator.api.set_cooling_for_days(
-                self.system, duration_days=int(value)
+            await set_cooling_for_days(
+                self.coordinator.api, self.system, duration_days=int(value)
             )
         await self.coordinator.async_request_refresh_delayed(20)
 
