@@ -135,7 +135,12 @@ async def test_missing_daily_data_is_refetched(
         daily_data_coordinator = hass_data["daily_data_coordinator"]
         assert not daily_data_coordinator.data
 
-        with mock.patch.object(daily_data_coordinator, "async_request_refresh") as refresh:
+        with mock.patch.object(
+            daily_data_coordinator, "async_request_refresh"
+        ) as refresh:
+            await hass_data["system_coordinator"].async_refresh()
+            await hass.async_block_till_done()
+            # Retries are throttled, i.e. when data is updated after changing a setting
             await hass_data["system_coordinator"].async_refresh()
             await hass.async_block_till_done()
         refresh.assert_awaited_once()
@@ -159,7 +164,9 @@ async def test_daily_data_refreshed_at_night(
             "daily_data_coordinator"
         ]
 
-        with mock.patch.object(daily_data_coordinator, "async_request_refresh") as refresh:
+        with mock.patch.object(
+            daily_data_coordinator, "async_request_refresh"
+        ) as refresh:
             async_fire_time_changed(
                 hass,
                 (dt_util.now() + timedelta(days=1)).replace(

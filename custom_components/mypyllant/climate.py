@@ -807,6 +807,8 @@ class ZoneClimate(CoordinatorEntity, ClimateEntity):
                     self.time_program_overwrite
                     and not self.preset_mode == PRESET_BOOST
                     and self.zone.control_identifier.is_vrc700
+                    and self.zone.heating.operation_mode_heating
+                    == ZoneOperatingModeVRC700.AUTO
                 ):
                     # VRC700 time programs have no setpoint per slot, the day temperature applies instead
                     _LOGGER.debug(
@@ -816,7 +818,9 @@ class ZoneClimate(CoordinatorEntity, ClimateEntity):
                     )
                     await self.set_manual_mode_setpoint(temperature=target_temp_low)
                 elif (
-                    self.time_program_overwrite and not self.preset_mode == PRESET_BOOST
+                    self.time_program_overwrite
+                    and not self.preset_mode == PRESET_BOOST
+                    and not self.zone.control_identifier.is_vrc700
                 ):
                     _LOGGER.debug(
                         "Setting heating time program temperature in %s to %s",

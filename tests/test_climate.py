@@ -256,10 +256,20 @@ async def test_ambisense_climate(
     await mocked_api.aiohttp_session.close()
 
 
+@pytest.mark.parametrize(
+    "operation_mode,expected_call",
+    [
+        (ZoneOperatingModeVRC700.AUTO, "set_manual_mode_setpoint"),
+        # The day temperature doesn't apply in set back mode
+        (ZoneOperatingModeVRC700.SET_BACK, "quick_veto_zone_temperature"),
+    ],
+)
 async def test_vrc700_time_program_overwrite(
     mypyllant_aioresponses,
     mocked_api: MyPyllantAPI,
     system_coordinator_mock: SystemCoordinator,
+    operation_mode,
+    expected_call,
 ):
     """
     VRC700 time programs have no setpoint per slot, so the day temperature is set instead, see
@@ -279,13 +289,13 @@ async def test_vrc700_time_program_overwrite(
             ),
             {},
         )
-        climate.zone.heating.operation_mode_heating = ZoneOperatingModeVRC700.AUTO
+        climate.zone.heating.operation_mode_heating = operation_mode
         climate.zone.cooling = None
         climate.zone.current_special_function = ZoneCurrentSpecialFunction.NONE
         with (
             mock.patch.object(
-                system_coordinator_mock.api, "set_manual_mode_setpoint"
-            ) as mock_manual,
+                system_coordinator_mock.api, expected_call
+            ) as mock_expected,
             mock.patch.object(
                 system_coordinator_mock.api, "set_time_program_temperature"
             ) as mock_time_program,
@@ -298,7 +308,7 @@ async def test_vrc700_time_program_overwrite(
                     + 1
                 }
             )
-        mock_manual.assert_awaited_once()
+        mock_expected.assert_awaited_once()
         mock_time_program.assert_not_awaited()
         system_coordinator_mock._debounced_refresh.async_cancel()
     await mocked_api.aiohttp_session.close()

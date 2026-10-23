@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime as dt, timedelta
+from datetime import datetime as dt, timedelta, timezone
 import voluptuous as vol
-from aiohttp import ClientError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import (
@@ -29,6 +28,7 @@ from myPyllant.http_client import (
 )
 from myPyllant.tests import generate_test_data
 from .const import (
+    API_DOWN_PAUSE_INTERVAL,
     DEFAULT_COUNTRY,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
@@ -122,12 +122,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 f"myVAILLANT login is currently not available: {e.__cause__}"
             ) from e
         raise ConfigEntryAuthFailed from e
-    except (ClientError, TimeoutError) as e:
+    except Exception as e:
+        # i.e. network errors or error responses of the token endpoint during outages
         await api.aiohttp_session.close()
         raise ConfigEntryNotReady(f"Could not log in to myVAILLANT: {e}") from e
-    except Exception:
-        await api.aiohttp_session.close()
-        raise
 
     system_coordinator = SystemCoordinator(
         hass, api, entry, timedelta(seconds=update_interval)
@@ -154,11 +152,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await daily_data_coordinator.async_refresh()
     hass.data[DOMAIN][entry.entry_id]["daily_data_coordinator"] = daily_data_coordinator
 
+    last_daily_data_retry: dt | None = None
+
     @callback
     def _refresh_missing_daily_data() -> None:
         # Daily data failed during setup (i.e. quota exceeded) and isn't polled without an update interval,
-        # so it's retried after successful system updates. The quota backoff still applies.
-        if system_coordinator.last_update_success and not daily_data_coordinator.data:
+        # so it's retried after successful system updates, at most every API_DOWN_PAUSE_INTERVAL
+        nonlocal last_daily_data_retry
+        if not system_coordinator.last_update_success or daily_data_coordinator.data:
+            return
+        now = dt.now(timezone.utc)
+        if last_daily_data_retry is None or now - last_daily_data_retry > timedelta(
+            seconds=API_DOWN_PAUSE_INTERVAL
+        ):
+            last_daily_data_retry = now
             entry.async_create_background_task(
                 hass,
                 daily_data_coordinator.async_request_refresh(),

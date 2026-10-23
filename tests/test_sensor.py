@@ -941,3 +941,24 @@ def test_efficiency_only_includes_heating(hass):
     }
     assert EfficiencySensor(_SYSTEM_ID, 0, coordinator).native_value == 4.5
     assert EfficiencySensor(_SYSTEM_ID, None, coordinator).native_value == 4.5
+
+
+async def test_migrate_api_request_count_unique_id_already_migrated(hass):
+    """
+    An old entity recreated by a downgrade is removed instead of failing the migration
+    """
+    config_entry = get_config_entry()
+    config_entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    old = registry.async_get_or_create(
+        "sensor", DOMAIN, f"{DOMAIN}_api_request_count", config_entry=config_entry
+    )
+    new = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{DOMAIN}_{config_entry.entry_id}_api_request_count",
+        config_entry=config_entry,
+    )
+    migrate_api_request_count_unique_id(hass, config_entry)
+    assert registry.async_get(old.entity_id) is None
+    assert registry.async_get(new.entity_id) is not None

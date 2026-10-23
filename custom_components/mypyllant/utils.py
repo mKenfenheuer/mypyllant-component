@@ -21,7 +21,7 @@ from custom_components.mypyllant.const import (
     DEFAULT_MANUAL_COOLING_DURATION,
 )
 from myPyllant.const import DEFAULT_HOLIDAY_DURATION
-from myPyllant.http_client import LoginEndpointInvalid
+from myPyllant.http_client import AuthenticationFailed, LoginEndpointInvalid
 
 if typing.TYPE_CHECKING:
     from custom_components.mypyllant.coordinator import SystemCoordinator
@@ -240,6 +240,13 @@ def to_local_datetime(value: datetime | None, tz: tzinfo) -> datetime | None:
     return value.astimezone(tz)
 
 
+def add_local_days(value: datetime, days: float, tz: tzinfo) -> datetime:
+    """
+    Adds days in the timezone of the system, so the time of day stays the same across DST changes
+    """
+    return (value.astimezone(tz) + timedelta(days=days)).astimezone(timezone.utc)
+
+
 async def set_holiday(
     api: MyPyllantAPI,
     system: System,
@@ -252,8 +259,8 @@ async def set_holiday(
     Sets holiday mode with start and end in UTC, defaulting to now and the default duration in days
     """
     start = to_api_datetime(start, system.timezone) or datetime.now(timezone.utc)
-    end = to_api_datetime(end, system.timezone) or start + timedelta(
-        days=default_duration
+    end = to_api_datetime(end, system.timezone) or add_local_days(
+        start, default_duration, system.timezone
     )
     return await api.set_holiday(system, start=start, end=end, setpoint=setpoint)
 
@@ -279,11 +286,11 @@ async def set_cooling_for_days(
                 "Start and end dates can't be used together with duration_days"
             )
         start = datetime.now(timezone.utc)
-        end = start + timedelta(days=duration_days)
+        end = add_local_days(start, duration_days, system.timezone)
     else:
         start = to_api_datetime(start, system.timezone) or datetime.now(timezone.utc)
-        end = to_api_datetime(end, system.timezone) or start + timedelta(
-            days=default_duration
+        end = to_api_datetime(end, system.timezone) or add_local_days(
+            start, default_duration, system.timezone
         )
     return await api.set_cooling_for_days(system, start=start, end=end)
 
@@ -349,11 +356,12 @@ def extract_quota_duration(exc_info: BaseException | None) -> int | None:
 
 class RedactSecretsFilter(logging.Filter):
     """
-    myPyllant logs the password and tokens in its debug logs, which are attached to public issues
+    myPyllant logs the password, tokens and session cookies in its debug logs, which are attached to public issues
     """
 
     pattern = re.compile(
-        r"(password|access_token|refresh_token|id_token)(['\"]?\s*[:=]\s*['\"]?)[^&'\"\s,}]+"
+        r"(password|access_token|refresh_token|id_token|KEYCLOAK_IDENTITY|KEYCLOAK_SESSION|AUTH_SESSION_ID)"
+        r"(['\"]?\s*[:=]\s*['\"]?)[^&;'\"\s,}]+"
     )
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -368,8 +376,12 @@ class RedactSecretsFilter(logging.Filter):
 def is_transient_login_error(exc_info: BaseException) -> bool:
     """
     myPyllant raises LoginEndpointInvalid for every error response of the login page, including
-    server errors during outages of the myVAILLANT API, which shouldn't require a reauthentication
+    server errors during outages of the myVAILLANT API, which shouldn't require a reauthentication.
+    A login page without login form (i.e. a maintenance page) raises AuthenticationFailed before
+    any credentials were sent.
     """
+    if isinstance(exc_info, AuthenticationFailed):
+        return str(exc_info) == "Could not get login URL"
     cause = exc_info.__cause__
     return (
         isinstance(exc_info, LoginEndpointInvalid)

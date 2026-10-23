@@ -121,3 +121,21 @@ async def test_holiday_switch_uses_default_setpoint_option(is_vrc700, expected):
     await switch.async_turn_on()
     assert coordinator.api.set_holiday.await_args.kwargs["setpoint"] == expected
     assert coordinator.api.set_holiday.await_args.kwargs["start"].tzinfo == timezone.utc
+
+
+async def test_set_holiday_default_end_keeps_local_time_across_dst():
+    """
+    The default end keeps the local time of day, even if the holiday crosses a DST change
+    """
+    api = MagicMock()
+    api.set_holiday = AsyncMock()
+    system = _mock_system()
+    # 2026-10-25 is the end of DST in Germany
+    await set_holiday(
+        api,
+        system,
+        start=datetime(2026, 10, 20, 12, 0, tzinfo=BERLIN),
+        default_duration=10,
+    )
+    end = api.set_holiday.await_args.kwargs["end"]
+    assert end.astimezone(BERLIN) == datetime(2026, 10, 30, 12, 0, tzinfo=BERLIN)

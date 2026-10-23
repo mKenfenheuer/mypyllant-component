@@ -287,11 +287,14 @@ def migrate_api_request_count_unique_id(hass: HomeAssistant, config: ConfigEntry
     if entity_id is None:
         return
     entity = registry.async_get(entity_id)
-    if entity is not None and entity.config_entry_id == config.entry_id:
-        registry.async_update_entity(
-            entity_id,
-            new_unique_id=f"{DOMAIN}_{config.entry_id}_api_request_count",
-        )
+    if entity is None or entity.config_entry_id != config.entry_id:
+        return
+    new_unique_id = f"{DOMAIN}_{config.entry_id}_api_request_count"
+    if registry.async_get_entity_id("sensor", DOMAIN, new_unique_id):
+        # Already migrated, i.e. the old entity was recreated by a downgrade
+        registry.async_remove(entity_id)
+    else:
+        registry.async_update_entity(entity_id, new_unique_id=new_unique_id)
 
 
 async def async_setup_entry(

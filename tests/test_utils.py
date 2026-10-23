@@ -2,7 +2,12 @@ import logging
 
 import pytest
 
-from custom_components.mypyllant.utils import EntityList, RedactSecretsFilter
+from custom_components.mypyllant.utils import (
+    EntityList,
+    RedactSecretsFilter,
+    is_transient_login_error,
+)
+from myPyllant.http_client import AuthenticationFailed, LoginEndpointInvalid
 
 
 async def test_log_on_entity_exception(caplog):
@@ -55,3 +60,25 @@ def test_redact_secrets_filter(args, expected):
     )
     assert RedactSecretsFilter().filter(record)
     assert record.getMessage() == expected
+
+
+def test_redact_session_cookies():
+    record = logging.LogRecord(
+        "myPyllant.api",
+        logging.DEBUG,
+        __file__,
+        1,
+        "Got login response headers %s",
+        ("Set-Cookie: KEYCLOAK_IDENTITY=eyJabc.def; Version=1; Path=/",),
+        None,
+    )
+    RedactSecretsFilter().filter(record)
+    assert record.getMessage() == (
+        "Got login response headers Set-Cookie: KEYCLOAK_IDENTITY=***; Version=1; Path=/"
+    )
+
+
+def test_is_transient_login_error():
+    assert is_transient_login_error(AuthenticationFailed("Could not get login URL"))
+    assert not is_transient_login_error(AuthenticationFailed("Login failed"))
+    assert not is_transient_login_error(LoginEndpointInvalid())
