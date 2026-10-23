@@ -18,6 +18,7 @@ from custom_components.mypyllant.sensor import (
     CircuitMinFlowTemperatureSetpointSensor,
     CircuitStateSensor,
     DataSensor,
+    EfficiencySensor,
     DomesticHotWaterCurrentSpecialFunctionSensor,
     DomesticHotWaterOperationModeSensor,
     DomesticHotWaterSetPointSensor,
@@ -257,6 +258,55 @@ async def test_data_sensor(
         await mocked_api.aiohttp_session.close()
 
 
+@pytest.mark.parametrize("test_data", list_test_data(only_with_systems=True))
+async def test_data_sensor_disabled_keeps_unique_id(
+    mypyllant_aioresponses,
+    mocked_api: MyPyllantAPI,
+    daily_data_coordinator_mock,
+    test_data,
+):
+    """
+    Disabled data sensors skip their update, but must keep their unique ID, and the
+    device efficiency sensor must not fall back to the system unique ID, see
+    https://github.com/signalkraft/mypyllant-component/issues/442
+    """
+    with (
+        mypyllant_aioresponses(test_data) as _,
+        patch.object(
+            daily_data_coordinator_mock,
+            "is_sensor_disabled",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        system_coordinator = daily_data_coordinator_mock.hass_data["system_coordinator"]
+        system_coordinator.data = await system_coordinator._async_update_data()
+        daily_data_coordinator_mock.data = (
+            await daily_data_coordinator_mock._async_update_data()
+        )
+        system_id = next(iter(daily_data_coordinator_mock.data), None)
+        if (
+            system_id is None
+            or not daily_data_coordinator_mock.data[system_id]["devices_data"]
+        ):
+            await mocked_api.aiohttp_session.close()
+            pytest.skip(f"No devices in system {system_id}")
+        for de_index, devices_data in enumerate(
+            daily_data_coordinator_mock.data[system_id]["devices_data"]
+        ):
+            for da_index, _ in enumerate(devices_data):
+                assert (
+                    DataSensor(
+                        system_id, de_index, da_index, daily_data_coordinator_mock
+                    ).unique_id
+                    is not None
+                )
+        assert (
+            EfficiencySensor(system_id, 0, daily_data_coordinator_mock).unique_id
+            != EfficiencySensor(system_id, None, daily_data_coordinator_mock).unique_id
+        )
+    await mocked_api.aiohttp_session.close()
+
+
 async def test_device_sensor(
     mypyllant_aioresponses,
     mocked_api: MyPyllantAPI,
@@ -382,6 +432,7 @@ async def test_write_hourly_statistics_correct_data(hass):
     assert metadata["mean_type"] == StatisticMeanType.NONE
     assert metadata["has_sum"] is True
     assert metadata["unit_class"] == "energy"
+    assert metadata["name"] == f"{sensor.name} (hourly)"
 
     assert len(stats) == 3
     assert stats[0]["start"] == buckets[0].start_date
@@ -811,3 +862,18 @@ def test_today_total_consumption_all_none_values(hass):
         mock_datetime.now.return_value = _MIDNIGHT + timedelta(hours=1)
         sensor = _make_sensor(hass, buckets)
         assert sensor.today_total_consumption == 0.0
+
+
+@pytest.mark.parametrize(
+    "values,expected",
+    [
+        ([6.5, 1.28, 30.0], 40.0),  # small values of gas boilers aren't rounded to 0
+        ([8000.0, 998.87], 9000.0),  # odd float values from the API are rounded
+    ],
+)
+def test_today_total_consumption_rounding(hass, values, expected):
+    buckets = _make_buckets(values)
+    with patch("custom_components.mypyllant.sensor.datetime") as mock_datetime:
+        mock_datetime.now.return_value = _MIDNIGHT + timedelta(hours=len(values))
+        sensor = _make_sensor(hass, buckets)
+        assert sensor.today_total_consumption == expected

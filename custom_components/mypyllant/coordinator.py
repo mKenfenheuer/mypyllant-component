@@ -452,6 +452,9 @@ class DailyDataCoordinator(MyPyllantCoordinator):
                 }
                 for de_index, device in enumerate(system.devices):
                     for da_index, dd in enumerate(device.data):
+                        # The API returns skipped (disabled) data without a device, which would
+                        # leave its sensors without unique ID
+                        dd.device = device
                         sensor_id = f"{DOMAIN}_{device.system_id}_{device.device_uuid}_{da_index}_{de_index}"
                         if await self.is_sensor_disabled(sensor_id):
                             device.data[da_index].skip_data_update = True

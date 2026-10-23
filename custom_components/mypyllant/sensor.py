@@ -994,7 +994,9 @@ class DataSensor(CoordinatorEntity, SensorEntity):
             and bucket.start_date.replace(hour=0, minute=0, second=0, microsecond=0)
             == today
         )
-        return round(total / 1000, 1) * 1000 if total else 0.0
+        # Rounds odd float values from the API (i.e. 8998.87 -> 9000), while keeping small values
+        # of i.e. gas boilers, which would be rounded to 0 with a precision of 100 Wh
+        return round(total, -1) if total else 0.0
 
     @property
     def unique_id(self) -> str | None:
@@ -1147,7 +1149,9 @@ class DataSensor(CoordinatorEntity, SensorEntity):
             StatisticMetaData(
                 mean_type=StatisticMeanType.NONE,
                 has_sum=True,
-                name=self.name,
+                # Distinguishes the accurate hourly statistic from the entity's own statistic,
+                # which has the same name in the energy dashboard
+                name=f"{self.name} (hourly)",
                 source=DOMAIN,
                 statistic_id=statistic_id,
                 unit_class="energy",
@@ -1210,13 +1214,15 @@ class EfficiencySensor(CoordinatorEntity, SensorEntity):
         )
 
     @property
+    def device(self) -> Device | None:
+        if self.de_index is None:
+            return None
+        return next((d.device for d in self.device_data_list if d.device), None)
+
+    @property
     def unique_id(self) -> str:
-        if (
-            len(self.device_data_list) > 0
-            and self.de_index is not None
-            and self.device_data_list[0].device is not None
-        ):
-            return f"{DOMAIN}_{self.system_id}_device_{self.device_data_list[0].device.device_uuid}_heating_energy_efficiency"
+        if self.device is not None:
+            return f"{DOMAIN}_{self.system_id}_device_{self.device.device_uuid}_heating_energy_efficiency"
         else:
             return f"{DOMAIN}_{self.system_id}_heating_energy_efficiency"
 
@@ -1224,12 +1230,12 @@ class EfficiencySensor(CoordinatorEntity, SensorEntity):
     def device_info(self):
         if len(self.device_data_list) == 0:
             return None
-        if self.de_index is not None and self.device_data_list[0].device is not None:
+        if self.device is not None:
             return {
                 "identifiers": {
                     (
                         DOMAIN,
-                        f"{self.system_id}_device_{self.device_data_list[0].device.device_uuid}",
+                        f"{self.system_id}_device_{self.device.device_uuid}",
                     )
                 }
             }
@@ -1247,12 +1253,8 @@ class EfficiencySensor(CoordinatorEntity, SensorEntity):
 
     @property
     def name(self):
-        if (
-            len(self.device_data_list) > 0
-            and self.de_index is not None
-            and self.device_data_list[0].device is not None
-        ):
-            return f"{self.home_name} Device {self.de_index} {self.device_data_list[0].device.name_display} Heating Energy Efficiency"
+        if self.device is not None:
+            return f"{self.home_name} Device {self.de_index} {self.device.name_display} Heating Energy Efficiency"
         else:
             return f"{self.home_name} Heating Energy Efficiency"
 

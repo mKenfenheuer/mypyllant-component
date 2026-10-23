@@ -354,7 +354,13 @@ actually happened, not the time it was retrieved.
 
 These statistics appear under external IDs of the form
 `mypyllant:mypyllant_<system>_<device>_<operation>_<index>` (Developer Tools → Statistics), one
-per energy sensor (e.g. *Consumed Electrical Energy Domestic Hot Water*, *... Heating*).
+per energy sensor (e.g. *Consumed Electrical Energy Domestic Hot Water (hourly)*, *... Heating (hourly)*).
+
+!!! tip
+
+    In the Energy Dashboard, pick the statistic ending in **(hourly)**. The statistic without
+    suffix is recorded by Home Assistant from the sensor itself. It only sees new values when the
+    energy data is refreshed, so it can miss consumption and attribute it to the wrong hour.
 
 ### How it works
 
