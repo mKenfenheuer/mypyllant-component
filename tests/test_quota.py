@@ -74,6 +74,26 @@ async def test_quota_time_extraction(
     assert extract_quota_duration(quota_exception) == 30 * 60 + 2
 
 
+async def test_quota_duration_with_days():
+    """Multi-day quota windows are prefixed with days
+
+    See https://github.com/signalkraft/mypyllant-component/issues/480
+    """
+    quota_exception = ClientResponseError(
+        request_info=RequestInfo(
+            url="https://api.vaillant-group.com/service-connected-control/end-user-app-api/v1/homes",  # type: ignore
+            method="GET",
+            headers=None,  # type: ignore
+        ),
+        history=None,  # type: ignore
+        status=403,
+        message='{ "statusCode": 403, "message": "Out of call volume quota. Quota will be replenished in 3.08:58:59." }',
+    )
+    assert (
+        extract_quota_duration(quota_exception) == 3 * 86400 + 8 * 3600 + 58 * 60 + 59
+    )
+
+
 async def test_quota_duration_from_retry_after_header():
     """Retry-After header should be preferred over parsing the body text.
 

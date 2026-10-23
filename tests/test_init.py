@@ -4,8 +4,9 @@ import logging
 from unittest import mock
 
 from homeassistant import data_entry_flow
-from homeassistant.config_entries import SOURCE_USER
+from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from myPyllant.api import MyPyllantAPI
 from myPyllant.http_client import AuthenticationFailed
@@ -13,7 +14,7 @@ from myPyllant.tests.generate_test_data import DATA_DIR
 from myPyllant.tests.utils import load_test_data
 
 from custom_components.mypyllant.const import DOMAIN
-from custom_components.mypyllant import async_setup_entry, async_unload_entry
+from custom_components.mypyllant import async_unload_entry
 from custom_components.mypyllant.config_flow import DATA_SCHEMA
 from tests.utils import get_config_entry, test_user_input
 
@@ -73,11 +74,37 @@ async def test_async_setup(
         await hass.config_entries.async_setup(config_entry.entry_id)
         await hass.async_block_till_done()
 
-        mock.patch("myPyllant.api.MyPyllantAPI", mocked_api)
-        result = await async_setup_entry(hass, config_entry)
-        assert result, "Component did not setup successfully"
+        assert config_entry.state is ConfigEntryState.LOADED, (
+            "Component did not setup successfully"
+        )
 
         result = await async_unload_entry(hass, config_entry)
         assert result, "Component did not unload successfully"
+
+    await mocked_api.aiohttp_session.close()
+
+
+async def test_async_setup_retries_without_system_data(
+    hass,
+    mypyllant_aioresponses,
+    mocked_api: MyPyllantAPI,
+):
+    """
+    If the first system fetch fails (i.e. quota exceeded), setup is retried instead of
+    loading without entities, see https://github.com/signalkraft/mypyllant-component/issues/510
+    """
+    test_data = load_test_data(DATA_DIR / "heatpump_heat_curve")
+    with (
+        mypyllant_aioresponses(test_data) as _,
+        mock.patch(
+            "custom_components.mypyllant.SystemCoordinator._async_update_data",
+            side_effect=UpdateFailed("Quota Exceeded"),
+        ),
+    ):
+        config_entry = get_config_entry()
+        config_entry.add_to_hass(hass)
+        await hass.config_entries.async_setup(config_entry.entry_id)
+        await hass.async_block_till_done()
+        assert config_entry.state is ConfigEntryState.SETUP_RETRY
 
     await mocked_api.aiohttp_session.close()

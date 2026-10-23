@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime as dt, timedelta
 import voluptuous as vol
+from aiohttp import ClientError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import (
@@ -11,7 +12,7 @@ from homeassistant.core import (
     ServiceCall,
     ServiceResponse,
 )
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import selector
 
 from myPyllant import export, report
@@ -98,7 +99,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     brand = entry.options.get(OPTION_BRAND, entry.data.get(OPTION_BRAND, DEFAULT_BRAND))
 
     hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = {}
+    # Keep quota state from a previous setup attempt (ConfigEntryNotReady), so retries respect the quota
+    hass.data[DOMAIN].setdefault(entry.entry_id, {})
 
     _LOGGER.debug("Creating API and logging in with %s in realm %s", username, country)
     api = MyPyllantAPI(
@@ -107,13 +109,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await api.login()
     except (AuthenticationFailed, LoginEndpointInvalid, RealmInvalid) as e:
+        await api.aiohttp_session.close()
         raise ConfigEntryAuthFailed from e
+    except (ClientError, TimeoutError) as e:
+        await api.aiohttp_session.close()
+        raise ConfigEntryNotReady(f"Could not log in to myVAILLANT: {e}") from e
+    except Exception:
+        await api.aiohttp_session.close()
+        raise
 
     system_coordinator = SystemCoordinator(
         hass, api, entry, timedelta(seconds=update_interval)
     )
     _LOGGER.debug("Refreshing SystemCoordinator")
-    await system_coordinator.async_refresh()
+    try:
+        # Raises ConfigEntryNotReady if the first fetch fails (i.e. quota exceeded), so Home Assistant
+        # retries the setup. Otherwise the platforms would be set up without data and never create entities
+        await system_coordinator.async_config_entry_first_refresh()
+    except Exception:
+        await api.aiohttp_session.close()
+        raise
     hass.data[DOMAIN][entry.entry_id]["system_coordinator"] = system_coordinator
 
     # Daily data coordinator is fetched once by default (to get all entities), but not updated on a regular basis

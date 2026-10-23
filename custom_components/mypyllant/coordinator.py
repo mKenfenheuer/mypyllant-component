@@ -9,6 +9,7 @@ from typing import TypedDict
 from aiohttp import ClientResponseError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers import entity_registry as er
 
@@ -41,6 +42,11 @@ from custom_components.mypyllant.utils import (
 )
 from myPyllant.api import AmbisenseNoFacilityError, MyPyllantAPI
 from myPyllant.enums import DeviceDataBucketResolution
+from myPyllant.http_client import (
+    AuthenticationFailed,
+    LoginEndpointInvalid,
+    RealmInvalid,
+)
 from myPyllant.models import System, DeviceData, Home
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,6 +72,7 @@ class MyPyllantCoordinator(DataUpdateCoordinator):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name="myVAILLANT",
             update_interval=update_interval,
         )
@@ -131,23 +138,72 @@ class MyPyllantCoordinator(DataUpdateCoordinator):
         self._quota_end_time = None
         self._quota_exc_info = None
 
-    async def _refresh_session(self):
-        if (
+    @property
+    def _session_lock(self) -> asyncio.Lock:
+        """
+        Lock shared by all coordinators and entities of a config entry, because they share one API session
+        """
+        if "session_lock" not in self.hass_data:
+            self.hass_data["session_lock"] = asyncio.Lock()
+        return self.hass_data["session_lock"]
+
+    def _session_needs_refresh(self) -> bool:
+        return (
             self.api.oauth_session_expires is None
             or self.api.oauth_session_expires
             < dt.now(timezone.utc) + timedelta(seconds=180)
-        ):
-            _LOGGER.debug("Refreshing token for %s", self.api.username)
-            await self.api.refresh_token()
-        else:
-            delta = self.api.oauth_session_expires - (
-                dt.now(timezone.utc) + timedelta(seconds=180)
+        )
+
+    async def _refresh_session(self):
+        # Refreshing the same refresh token concurrently makes Keycloak revoke the whole session
+        # ("Maximum allowed refresh token reuse exceeded"), so refreshes are serialized and
+        # the expiry is re-checked after acquiring the lock
+        async with self._session_lock:
+            if self._session_needs_refresh():
+                _LOGGER.debug("Refreshing token for %s", self.api.username)
+                try:
+                    await self.api.refresh_token()
+                except ClientResponseError as e:
+                    if e.status not in (400, 401):
+                        raise
+                    # The refresh token is invalid or the session was revoked (invalid_grant),
+                    # a refresh can't recover from that, so we log in again
+                    _LOGGER.warning(
+                        "Token refresh failed for %s, logging in again: %s",
+                        self.api.username,
+                        e.message,
+                    )
+                    await self._login()
+            else:
+                delta = self.api.oauth_session_expires - (  # type: ignore
+                    dt.now(timezone.utc) + timedelta(seconds=180)
+                )
+                _LOGGER.debug(
+                    "Waiting %ss until token refresh for %s",
+                    delta.seconds,
+                    self.api.username,
+                )
+
+    async def _login(self):
+        # Drop cookies of the revoked Keycloak session, so the login starts from scratch
+        self.api.aiohttp_session.cookie_jar.clear()
+        try:
+            await self.api.login()
+        except (AuthenticationFailed, LoginEndpointInvalid, RealmInvalid) as e:
+            raise ConfigEntryAuthFailed(
+                f"Could not log in to myVAILLANT as {self.api.username}"
+            ) from e
+
+    def _invalidate_session_on_auth_error(self, exc_info: ClientResponseError) -> None:
+        """
+        A 401 means the access token was rejected before its expiry (i.e. the session was revoked),
+        so the next update should refresh or log in again instead of reusing it
+        """
+        if exc_info.status == 401:
+            _LOGGER.warning(
+                "myVAILLANT API rejected the access token, refreshing session on next update"
             )
-            _LOGGER.debug(
-                "Waiting %ss until token refresh for %s",
-                delta.seconds,
-                self.api.username,
-            )
+            self.api.oauth_session_expires = None
 
     async def async_request_refresh_delayed(self, delay=None):
         """
@@ -331,6 +387,7 @@ class SystemCoordinator(MyPyllantCoordinator):
             return []
         except ClientResponseError as e:
             self._set_quota_and_raise(e)
+            self._invalidate_session_on_auth_error(e)
             raise UpdateFailed(str(e)) from e
         except (CancelledError, TimeoutError) as e:
             self._raise_api_down(e)
@@ -409,6 +466,7 @@ class DailyDataCoordinator(MyPyllantCoordinator):
             return data
         except ClientResponseError as e:
             self._set_quota_and_raise(e)
+            self._invalidate_session_on_auth_error(e)
             raise UpdateFailed(str(e)) from e
         except (CancelledError, TimeoutError) as e:
             self._raise_api_down(e)

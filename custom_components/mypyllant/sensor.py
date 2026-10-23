@@ -279,7 +279,39 @@ async def async_setup_entry(
     hass: HomeAssistant, config: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     async_add_entities(await create_system_sensors(hass, config))  # type: ignore
-    async_add_entities(await create_daily_data_sensors(hass, config))  # type: ignore
+    daily_data_sensors = await create_daily_data_sensors(hass, config)
+    if daily_data_sensors:
+        async_add_entities(daily_data_sensors)  # type: ignore
+        return
+
+    # Daily data wasn't available during setup (i.e. quota exceeded), so the sensors are added
+    # once the coordinator fetched data. The listener also keeps the coordinator polling.
+    daily_data_coordinator: DailyDataCoordinator = hass.data[DOMAIN][config.entry_id][
+        "daily_data_coordinator"
+    ]
+
+    async def _add_daily_data_sensors() -> None:
+        async_add_entities(await create_daily_data_sensors(hass, config))  # type: ignore
+
+    listener_removed = False
+
+    @callback
+    def _remove_listener() -> None:
+        nonlocal listener_removed
+        if not listener_removed:
+            listener_removed = True
+            remove_listener()
+
+    @callback
+    def _on_daily_data_update() -> None:
+        if not daily_data_coordinator.data:
+            return
+        _remove_listener()
+        _LOGGER.info("Daily data is available now, adding sensors")
+        config.async_create_task(hass, _add_daily_data_sensors())
+
+    remove_listener = daily_data_coordinator.async_add_listener(_on_daily_data_update)
+    config.async_on_unload(_remove_listener)
 
 
 class SystemSensor(SystemCoordinatorEntity, SensorEntity):
