@@ -46,6 +46,11 @@ VRC700_FAN_MODE_WRITE_MAP = {
     FAN_LOW: VentilationOperationModeVRC700.SET_BACK,
     FAN_AUTO: VentilationOperationModeVRC700.AUTO,
 }
+# VRC700 reports AUTO / DAY / SET_BACK instead of TIME_CONTROLLED / NORMAL
+VRC700_HVAC_MODE_MAP = {
+    HVACMode.FAN_ONLY: VentilationOperationModeVRC700.DAY,
+    HVACMode.AUTO: VentilationOperationModeVRC700.AUTO,
+}
 
 
 class VentilationClimate(CoordinatorEntity, ClimateEntity):
@@ -93,9 +98,13 @@ class VentilationClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def name_prefix(self) -> str:
-        vname = [d for d in self.system.devices if d.type == "ventilation"][
-            0
-        ].name_display
+        devices = [d for d in self.system.devices if d.type == "ventilation"]
+        # Not every system lists the ventilation unit in its devices
+        vname = (
+            devices[self.ventilation_index].name_display
+            if len(devices) > self.ventilation_index
+            else str(self.ventilation_index)
+        )
         return f"{self.system.home.home_name or self.system.home.nomenclature} Ventilation {vname}"
 
     @property
@@ -135,6 +144,13 @@ class VentilationClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def hvac_mode(self) -> HVACMode:
+        if self.ventilation.control_identifier.is_vrc700:
+            if (
+                self.ventilation.operation_mode_ventilation
+                == VentilationOperationModeVRC700.AUTO
+            ):
+                return HVACMode.AUTO
+            return HVACMode.FAN_ONLY
         if (
             self.ventilation.operation_mode_ventilation
             in VENTILATION_HVAC_MODE_MAP.values()
@@ -155,9 +171,13 @@ class VentilationClimate(CoordinatorEntity, ClimateEntity):
 
     @ensure_token_refresh
     async def async_set_hvac_mode(self, hvac_mode):
+        if self.ventilation.control_identifier.is_vrc700:
+            mode = VRC700_HVAC_MODE_MAP[hvac_mode]
+        else:
+            mode = VENTILATION_HVAC_MODE_MAP[hvac_mode]
         await self.coordinator.api.set_ventilation_operation_mode(
             self.ventilation,
-            VENTILATION_HVAC_MODE_MAP[hvac_mode],
+            mode,
         )
         await self.coordinator.async_request_refresh_delayed()
 

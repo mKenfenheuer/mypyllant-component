@@ -59,13 +59,13 @@ async def async_setup_entry(
         if system.ambisense_rooms:
             for room_index, room in enumerate(system.ambisense_rooms):
                 for device in room.room_configuration.devices:
-                    if device.unreach is not None:
+                    if device.low_bat is not None:
                         sensors.append(
                             lambda: AmbisenseDeviceLowBattery(
                                 index, room_index, device, coordinator
                             )
                         )
-                    if device.low_bat is not None:
+                    if device.unreach is not None:
                         sensors.append(
                             lambda: AmbisenseDeviceUnreachable(
                                 index, room_index, device, coordinator
@@ -124,6 +124,9 @@ class ControlError(SystemControlEntity):
 
     @property
     def is_on(self) -> bool | None:
+        # Trouble codes are only fetched when the option is enabled, otherwise they're unknown
+        if self.system.diagnostic_trouble_codes is None:
+            return None
         return self.system.has_diagnostic_trouble_codes
 
     @property
@@ -148,8 +151,15 @@ class ControlOnline(SystemControlEntity):
         super().__init__(system_index, coordinator)
 
     @property
-    def is_on(self) -> bool:
-        return self.system.connected is True
+    def is_on(self) -> bool | None:
+        if self.system.connected is not None:
+            return self.system.connected
+        # The connection status is only fetched when the option is enabled,
+        # otherwise the online state of the home is used
+        online_state = self.system.home.extra_fields.get("online_state")
+        if online_state is None:
+            return None
+        return online_state == "ONLINE"
 
     @property
     def name(self) -> str:

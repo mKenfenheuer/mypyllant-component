@@ -150,6 +150,67 @@ async def test_ventilation_climate(
     await mocked_api.aiohttp_session.close()
 
 
+async def test_vrc700_ventilation_hvac_mode(
+    mypyllant_aioresponses,
+    mocked_api: MyPyllantAPI,
+    system_coordinator_mock: SystemCoordinator,
+):
+    """
+    See https://github.com/signalkraft/mypyllant-component/issues/303
+    """
+    test_data = load_test_data(DATA_DIR / "vrc700_ventilation.yaml")
+    with mypyllant_aioresponses(test_data) as _:
+        system_coordinator_mock.data = (
+            await system_coordinator_mock._async_update_data()
+        )
+        ventilation = VentilationClimate(0, 0, system_coordinator_mock)
+        assert ventilation.hvac_mode == HVACMode.AUTO
+        with mock.patch.object(
+            system_coordinator_mock.api, "set_ventilation_operation_mode"
+        ) as mock_set:
+            await ventilation.async_set_hvac_mode(HVACMode.FAN_ONLY)
+            assert mock_set.await_args is not None
+            assert mock_set.await_args.args[1] == VentilationOperationModeVRC700.DAY
+            await ventilation.async_set_hvac_mode(HVACMode.AUTO)
+            assert mock_set.await_args.args[1] == VentilationOperationModeVRC700.AUTO
+
+        # Not every system lists the ventilation unit in its devices
+        system_coordinator_mock.data[0].devices = []
+        assert isinstance(ventilation.name, str)
+        system_coordinator_mock._debounced_refresh.async_cancel()
+    await mocked_api.aiohttp_session.close()
+
+
+async def test_vrc700_ventilation_boost(
+    mypyllant_aioresponses,
+    mocked_api: MyPyllantAPI,
+    system_coordinator_mock: SystemCoordinator,
+):
+    """
+    See https://github.com/signalkraft/mypyllant-component/issues/220
+    """
+    test_data = load_test_data(DATA_DIR / "vrc700_ventilation.yaml")
+    with mypyllant_aioresponses(test_data) as _:
+        system_coordinator_mock.data = (
+            await system_coordinator_mock._async_update_data()
+        )
+        climate = ZoneClimate(0, 0, system_coordinator_mock, get_config_entry(), {})
+        with (
+            mock.patch.object(
+                system_coordinator_mock.api, "set_ventilation_boost"
+            ) as mock_set,
+            mock.patch.object(
+                system_coordinator_mock.api, "cancel_ventilation_boost"
+            ) as mock_cancel,
+        ):
+            await climate.set_ventilation_boost()
+            await climate.cancel_ventilation_boost()
+        mock_set.assert_awaited_once()
+        mock_cancel.assert_awaited_once()
+        system_coordinator_mock._debounced_refresh.async_cancel()
+    await mocked_api.aiohttp_session.close()
+
+
 @pytest.mark.parametrize(
     "test_data_path",
     ["ambisense", "ambisense2.yaml"],

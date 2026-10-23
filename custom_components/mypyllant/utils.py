@@ -489,7 +489,18 @@ class AmbisenseDeviceCoordinatorEntity(AmbisenseCoordinatorEntity):
         coordinator: SystemCoordinator,
     ) -> None:
         super().__init__(system_index, room_index, coordinator)
-        self.device = device
+        self.sgtin = device.sgtin
+        self._device = device
+
+    @property
+    def device(self) -> AmbisenseDevice:
+        # The coordinator creates new objects on every update, so the device is looked up by its serial number
+        for room in self.system.ambisense_rooms or []:
+            for device in room.room_configuration.devices:
+                if device.sgtin == self.sgtin:
+                    self._device = device
+                    return device
+        return self._device
 
     @property
     def name_prefix(self) -> str:

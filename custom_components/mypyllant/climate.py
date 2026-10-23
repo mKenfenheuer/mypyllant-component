@@ -561,8 +561,6 @@ class ZoneClimate(CoordinatorEntity, ClimateEntity):
             self.system.id,
             kwargs,
         )
-        if self.system.control_identifier.is_vrc700:
-            raise ValueError("Can't set ventilation boost on VRC700 systems")
         await self.coordinator.api.set_ventilation_boost(self.system)
         await self.coordinator.async_request_refresh_delayed(20)
 
@@ -572,8 +570,6 @@ class ZoneClimate(CoordinatorEntity, ClimateEntity):
             "Canceling ventilation boost on System %s",
             self.system.id,
         )
-        if self.system.control_identifier.is_vrc700:
-            raise ValueError("Can't cancel ventilation boost on VRC700 systems")
         await self.coordinator.api.cancel_ventilation_boost(self.system)
         await self.coordinator.async_request_refresh_delayed(20)
 
