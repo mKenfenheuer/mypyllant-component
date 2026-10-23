@@ -4,10 +4,10 @@ import logging
 from typing import Any
 
 import voluptuous as vol
+from aiohttp import ClientError
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigFlowResult
-from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.helpers import selector
 from homeassistant.helpers.config_validation import positive_int
 from myPyllant.api import (
@@ -26,6 +26,7 @@ from myPyllant.const import (
     DEFAULT_HOLIDAY_DURATION,
 )
 from . import OPTION_UPDATE_INTERVAL_DAILY
+from .utils import is_transient_login_error
 
 from .const import (
     DEFAULT_REFRESH_DELAY,
@@ -214,25 +215,49 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore
         """Create the options flow."""
         return OptionsFlowHandler()
 
+    async def _validate_login(
+        self, user_input: dict[str, Any]
+    ) -> tuple[str | None, dict[str, str], dict[str, str]]:
+        """
+        Logs in and returns the username, or form errors and their description placeholders
+        """
+        try:
+            return await validate_input(self.hass, user_input), {}, {}
+        except AuthenticationFailed:
+            return None, {"base": "authentication_failed"}, {}
+        except LoginEndpointInvalid as e:
+            if is_transient_login_error(e):
+                return None, {"base": "cannot_connect"}, {}
+            return None, {"country": "login_endpoint_invalid"}, {}
+        except RealmInvalid:
+            brand = user_input.get("brand", DEFAULT_BRAND)
+            if user_input.get("country") and brand in COUNTRIES:
+                return (
+                    None,
+                    {"country": "country_not_supported"},
+                    {"countries": ", ".join(COUNTRIES[brand].values())},
+                )
+            return None, {"country": "realm_invalid"}, {}
+        except ClientError, TimeoutError:
+            return None, {"base": "cannot_connect"}, {}
+        except Exception as e:  # pylint: disable=broad-except
+            _LOGGER.exception("Unexpected exception", exc_info=e)
+            return None, {"base": "unknown"}, {}
+
     async def async_step_user(self, user_input=None):
-        errors = {}
+        errors: dict[str, str] = {}
+        placeholders: dict[str, str] = {}
         if user_input is not None:
-            try:
-                username = await validate_input(self.hass, user_input)
+            username, errors, placeholders = await self._validate_login(user_input)
+            if username:
                 await self.async_set_unique_id(username)
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(title=username, data=user_input)
-            except AuthenticationFailed:
-                errors["base"] = "authentication_failed"
-            except LoginEndpointInvalid:
-                errors["country"] = "login_endpoint_invalid"
-            except RealmInvalid:
-                errors["country"] = "realm_invalid"
-            except AbortFlow:
-                errors["base"] = "already_configured"
-            except Exception as e:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception", exc_info=e)
-                errors["base"] = "unknown"
+                if any(
+                    entry.unique_id == username
+                    for entry in self._async_current_entries()
+                ):
+                    errors["base"] = "already_configured"
+                else:
+                    return self.async_create_entry(title=username, data=user_input)
             if "password" in user_input:
                 del user_input["password"]
 
@@ -240,6 +265,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore
             step_id="user",
             data_schema=self.add_suggested_values_to_schema(DATA_SCHEMA, user_input),
             errors=errors,
+            description_placeholders=placeholders or None,
         )
 
     async def async_step_reauth(self, *args, **kwargs):
@@ -249,28 +275,19 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore
     async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None = None):
         """Confirm reauthentication dialog."""
         errors: dict[str, str] = {}
+        placeholders: dict[str, str] = {}
 
         if user_input is not None:
-            try:
-                username = await validate_input(self.hass, user_input)
-                await self.async_set_unique_id(username)
-                self._abort_if_unique_id_mismatch(reason="wrong_account")
-            except AuthenticationFailed:
-                errors["base"] = "authentication_failed"
-            except LoginEndpointInvalid:
-                errors["country"] = "login_endpoint_invalid"
-            except RealmInvalid:
-                errors["country"] = "realm_invalid"
-            except AbortFlow:
-                errors["base"] = "already_configured"
-            except Exception as e:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception", exc_info=e)
-                errors["base"] = "unknown"
-            else:
-                return self.async_update_reload_and_abort(
-                    self._get_reauth_entry(),
-                    data_updates=user_input,
-                )
+            username, errors, placeholders = await self._validate_login(user_input)
+            if username:
+                if username != self._get_reauth_entry().unique_id:
+                    # Changing the account is done with reconfigure
+                    errors["base"] = "wrong_account"
+                else:
+                    return self.async_update_reload_and_abort(
+                        self._get_reauth_entry(),
+                        data_updates=user_input,
+                    )
         else:
             config_entry = self.hass.config_entries.async_get_entry(
                 self.context["entry_id"]
@@ -286,6 +303,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore
             step_id="reauth_confirm",
             data_schema=self.add_suggested_values_to_schema(DATA_SCHEMA, user_input),
             errors=errors,
+            description_placeholders=placeholders or None,
         )
 
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None):
@@ -296,28 +314,26 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore
         if not config_entry:
             return self.async_abort(reason="entry_not_found")
 
-        errors = {}
+        errors: dict[str, str] = {}
+        placeholders: dict[str, str] = {}
 
         if user_input is not None:
-            try:
-                await validate_input(self.hass, user_input)
-            except AuthenticationFailed:
-                errors["base"] = "authentication_failed"
-            except LoginEndpointInvalid:
-                errors["country"] = "login_endpoint_invalid"
-            except RealmInvalid:
-                errors["country"] = "realm_invalid"
-            except Exception as e:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception", exc_info=e)
-                errors["base"] = "unknown"
-            else:
-                updated_config = {**config_entry.data, **user_input}
-                self.hass.config_entries.async_update_entry(
-                    config_entry,
-                    data=updated_config,
-                )
-                await self.hass.config_entries.async_reload(config_entry.entry_id)
-                return self.async_abort(reason="reconfiguration_successful")
+            username, errors, placeholders = await self._validate_login(user_input)
+            if username:
+                if any(
+                    entry.unique_id == username
+                    and entry.entry_id != config_entry.entry_id
+                    for entry in self._async_current_entries()
+                ):
+                    errors["base"] = "already_configured"
+                else:
+                    # The title and unique ID follow the account, if it was changed
+                    return self.async_update_reload_and_abort(
+                        config_entry,
+                        unique_id=username,
+                        title=username,
+                        data_updates=user_input,
+                    )
         else:
             user_input = dict(config_entry.data)
 
@@ -328,4 +344,5 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):  # type: ignore
             step_id="reconfigure",
             data_schema=self.add_suggested_values_to_schema(DATA_SCHEMA, user_input),
             errors=errors,
+            description_placeholders=placeholders or None,
         )

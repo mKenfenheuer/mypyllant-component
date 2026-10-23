@@ -3,7 +3,8 @@
     "abort": {
       "entry_not_found": "No configuration entry was found for this user",
       "reauth_successful": "Reconfiguration was successful!",
-      "wrong_account": "The account you're trying to reconfigure is not the same as the one you logged in with"
+      "wrong_account": "The account you're trying to reconfigure is not the same as the one you logged in with",
+      "reconfigure_successful": "Reconfiguration was successful!"
     },
     "step": {
       "user": {
@@ -43,7 +44,10 @@
       "authentication_failed": "Authentication failed, check your username and password and make sure you selected the right country and device brand",
       "already_configured": "There's already a hub for this user configured",
       "another_user": "There's already a hub for this user configured",
-      "unknown": "Unexpected error"
+      "unknown": "Unexpected error",
+      "cannot_connect": "Could not reach the myVAILLANT login, it might be temporarily unavailable. Try again later",
+      "country_not_supported": "This brand isn't available in the selected country. Supported countries: {countries}",
+      "wrong_account": "This is not the account of this hub. Use Reconfigure to change the account"
     }
   },
   "entity": {

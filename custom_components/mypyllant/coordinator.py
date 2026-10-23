@@ -39,9 +39,10 @@ from custom_components.mypyllant.const import (
 from custom_components.mypyllant.utils import (
     is_quota_exceeded_exception,
     extract_quota_duration,
+    is_transient_login_error,
 )
 from myPyllant.api import AmbisenseNoFacilityError, MyPyllantAPI
-from myPyllant.enums import DeviceDataBucketResolution
+from myPyllant.enums import ControlIdentifier, DeviceDataBucketResolution
 from myPyllant.http_client import (
     AuthenticationFailed,
     LoginEndpointInvalid,
@@ -190,6 +191,10 @@ class MyPyllantCoordinator(DataUpdateCoordinator):
         try:
             await self.api.login()
         except (AuthenticationFailed, LoginEndpointInvalid, RealmInvalid) as e:
+            if is_transient_login_error(e):
+                raise UpdateFailed(
+                    f"myVAILLANT login is currently not available: {e.__cause__}"
+                ) from e
             raise ConfigEntryAuthFailed(
                 f"Could not log in to myVAILLANT as {self.api.username}"
             ) from e
@@ -358,6 +363,8 @@ class SystemCoordinator(MyPyllantCoordinator):
                         self.api.get_homes
                     )
                 ]
+                for home in self.homes:
+                    await self._skip_unknown_control_identifier(home)
             else:
                 _LOGGER.debug("Using cached homes for systems fetch")
             data = [
@@ -392,6 +399,24 @@ class SystemCoordinator(MyPyllantCoordinator):
         except (CancelledError, TimeoutError) as e:
             self._raise_api_down(e)
             return []  # mypy
+
+    async def _skip_unknown_control_identifier(self, home: Home) -> None:
+        """
+        The API returns control identifiers myPyllant doesn't know (i.e. "none" for homes in state INVITED),
+        which would fail the update of all systems. Those systems are marked as unsupported to skip them.
+        """
+        try:
+            await self.api.get_control_identifier(home.system_id)
+        except ValueError:
+            _LOGGER.warning(
+                "Skipping system %s of home %s with unknown control identifier %s",
+                home.system_id,
+                home.home_name or home.nomenclature,
+                self.api.control_identifiers.get(home.system_id),
+            )
+            self.api.control_identifiers[home.system_id] = (
+                ControlIdentifier.UNSUPPORTED.value
+            )
 
 
 class SystemWithDeviceData(TypedDict):

@@ -9,7 +9,9 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from myPyllant.api import MyPyllantAPI
-from myPyllant.http_client import AuthenticationFailed
+from myPyllant.tests.generate_test_data import DATA_DIR
+from myPyllant.tests.utils import load_test_data
+from myPyllant.http_client import AuthenticationFailed, LoginEndpointInvalid
 
 
 def _client_response_error(status: int, message: str) -> ClientResponseError:
@@ -121,4 +123,45 @@ async def test_unauthorized_response_invalidates_session(
         with pytest.raises(UpdateFailed):
             await system_coordinator_mock._async_update_data()
     assert mocked_api.oauth_session_expires is None
+    await mocked_api.aiohttp_session.close()
+
+
+async def test_refresh_session_login_outage_is_update_failed(
+    mocked_api: MyPyllantAPI, system_coordinator_mock
+):
+    """
+    A myVAILLANT outage during re-login must not trigger a reauthentication, see
+    https://github.com/signalkraft/mypyllant-component/issues/454
+    """
+    mocked_api.oauth_session_expires = None
+    login_error = LoginEndpointInvalid()
+    login_error.__cause__ = _client_response_error(503, "Service Unavailable")
+    with (
+        mock.patch.object(
+            mocked_api,
+            "refresh_token",
+            side_effect=_client_response_error(400, "invalid_grant"),
+        ),
+        mock.patch.object(mocked_api, "login", side_effect=login_error),
+        pytest.raises(UpdateFailed),
+    ):
+        await system_coordinator_mock._refresh_session()
+    await mocked_api.aiohttp_session.close()
+
+
+async def test_unknown_control_identifier_is_skipped(
+    mypyllant_aioresponses, mocked_api: MyPyllantAPI, system_coordinator_mock
+):
+    """
+    The API returns "none" as control identifier for invited homes, which myPyllant can't parse, see
+    https://github.com/signalkraft/mypyllant-component/issues/467
+    """
+    test_data = load_test_data(DATA_DIR / "heatpump_heat_curve")
+    with mypyllant_aioresponses(test_data) as _:
+        homes = [h async for h in mocked_api.get_homes()]
+        for home in homes:
+            mocked_api.control_identifiers[home.system_id] = "none"
+        system_coordinator_mock.homes = []
+        data = await system_coordinator_mock._async_update_data()
+    assert data == []
     await mocked_api.aiohttp_session.close()

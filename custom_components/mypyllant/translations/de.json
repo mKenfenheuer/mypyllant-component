@@ -16,7 +16,13 @@
       "login_endpoint_invalid": "Kein Login möglich mit diesem Land und Hersteller",
       "realm_invalid": "Für diesen Hersteller wird ein Land benötigt",
       "authentication_failed": "Login fehlgeschlagen, stimmen Benutzername & Passwort?",
-      "unknown": "Unerwarteter Fehler, siehe Logs"
+      "unknown": "Unerwarteter Fehler, siehe Logs",
+      "cannot_connect": "Der myVAILLANT Login ist nicht erreichbar, eventuell nur vorübergehend. Bitte später erneut versuchen",
+      "country_not_supported": "Dieser Hersteller ist im gewählten Land nicht verfügbar. Unterstützte Länder: {countries}",
+      "wrong_account": "Das ist nicht das Konto dieser Integration. Das Konto kann über Neu konfigurieren geändert werden"
+    },
+    "abort": {
+      "reconfigure_successful": "Die Neukonfiguration war erfolgreich"
     }
   },
   "entity": {

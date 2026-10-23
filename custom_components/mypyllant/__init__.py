@@ -42,6 +42,7 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL_DAILY,
 )
 from .coordinator import SystemCoordinator, DailyDataCoordinator
+from .utils import is_transient_login_error
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -112,6 +113,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await api.login()
     except (AuthenticationFailed, LoginEndpointInvalid, RealmInvalid) as e:
         await api.aiohttp_session.close()
+        if is_transient_login_error(e):
+            raise ConfigEntryNotReady(
+                f"myVAILLANT login is currently not available: {e.__cause__}"
+            ) from e
         raise ConfigEntryAuthFailed from e
     except (ClientError, TimeoutError) as e:
         await api.aiohttp_session.close()

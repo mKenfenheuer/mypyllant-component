@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.components.recorder.statistics import StatisticMeanType
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_registry import DATA_REGISTRY, EntityRegistry
 from homeassistant.loader import DATA_COMPONENTS, DATA_INTEGRATIONS
 
@@ -33,6 +34,7 @@ from custom_components.mypyllant.sensor import (
     SystemDeviceOnOffCyclesSensor,
     SystemDeviceOperationTimeSensor,
     create_system_sensors,
+    migrate_api_request_count_unique_id,
     SystemTopDHWTemperatureSensor,
     SystemBottomDHWTemperatureSensor,
     SystemTopCHTemperatureSensor,
@@ -877,3 +879,32 @@ def test_today_total_consumption_rounding(hass, values, expected):
         mock_datetime.now.return_value = _MIDNIGHT + timedelta(hours=len(values))
         sensor = _make_sensor(hass, buckets)
         assert sensor.today_total_consumption == expected
+
+
+async def test_migrate_api_request_count_unique_id(hass):
+    """
+    See https://github.com/signalkraft/mypyllant-component/issues/434
+    """
+    config_entry = get_config_entry()
+    config_entry.add_to_hass(hass)
+    other_entry = get_config_entry()
+    other_entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    entry = registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{DOMAIN}_api_request_count",
+        config_entry=config_entry,
+    )
+
+    # Entities of other accounts aren't touched
+    migrate_api_request_count_unique_id(hass, other_entry)
+    assert (
+        registry.async_get(entry.entity_id).unique_id == f"{DOMAIN}_api_request_count"
+    )
+
+    migrate_api_request_count_unique_id(hass, config_entry)
+    assert (
+        registry.async_get(entry.entity_id).unique_id
+        == f"{DOMAIN}_{config_entry.entry_id}_api_request_count"
+    )

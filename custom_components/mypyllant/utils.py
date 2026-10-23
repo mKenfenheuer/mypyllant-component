@@ -20,6 +20,7 @@ from custom_components.mypyllant.const import (
     DEFAULT_MANUAL_COOLING_DURATION,
 )
 from myPyllant.const import DEFAULT_HOLIDAY_DURATION
+from myPyllant.http_client import LoginEndpointInvalid
 
 if typing.TYPE_CHECKING:
     from custom_components.mypyllant.coordinator import SystemCoordinator
@@ -343,6 +344,19 @@ def extract_quota_duration(exc_info: BaseException | None) -> int | None:
         seconds = int(match.group(4))
         return days * 86400 + hours * 3600 + minutes * 60 + seconds
     return None
+
+
+def is_transient_login_error(exc_info: BaseException) -> bool:
+    """
+    myPyllant raises LoginEndpointInvalid for every error response of the login page, including
+    server errors during outages of the myVAILLANT API, which shouldn't require a reauthentication
+    """
+    cause = exc_info.__cause__
+    return (
+        isinstance(exc_info, LoginEndpointInvalid)
+        and isinstance(cause, ClientResponseError)
+        and (cause.status >= 500 or cause.status == 429)
+    )
 
 
 def is_api_down_exception(exc_info: Exception) -> bool:

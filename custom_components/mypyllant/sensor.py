@@ -28,6 +28,7 @@ from homeassistant.const import (
     UnitOfPower,
 )
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
@@ -275,9 +276,28 @@ async def create_daily_data_sensors(
     return sensors
 
 
+def migrate_api_request_count_unique_id(hass: HomeAssistant, config: ConfigEntry):
+    """
+    The unique ID of the API request count didn't contain the config entry, which collided with multiple accounts
+    """
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id(
+        "sensor", DOMAIN, f"{DOMAIN}_api_request_count"
+    )
+    if entity_id is None:
+        return
+    entity = registry.async_get(entity_id)
+    if entity is not None and entity.config_entry_id == config.entry_id:
+        registry.async_update_entity(
+            entity_id,
+            new_unique_id=f"{DOMAIN}_{config.entry_id}_api_request_count",
+        )
+
+
 async def async_setup_entry(
     hass: HomeAssistant, config: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    migrate_api_request_count_unique_id(hass, config)
     async_add_entities(await create_system_sensors(hass, config))  # type: ignore
     daily_data_sensors = await create_daily_data_sensors(hass, config)
     if daily_data_sensors:
@@ -1376,6 +1396,7 @@ class SystemDeviceCurrentPowerSensor(SystemDeviceSensor):
 
 
 class SystemAPIRequestCount(SensorEntity, CoordinatorEntity):
+    coordinator: SystemCoordinator
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
@@ -1385,7 +1406,7 @@ class SystemAPIRequestCount(SensorEntity, CoordinatorEntity):
 
     @property
     def unique_id(self) -> str:
-        return f"{DOMAIN}_api_request_count"
+        return f"{DOMAIN}_{self.coordinator.entry.entry_id}_api_request_count"
 
     @property
     def name(self):
